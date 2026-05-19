@@ -1,0 +1,100 @@
+// escrow.pulsar
+// A simple escrow contract. Buyer deposits funds, seller delivers,
+// buyer confirms release. Arbiter can resolve disputes.
+
+contract Escrow {
+    storage buyer: address;
+    storage seller: address;
+    storage arbiter: address;
+    storage amount: u256;
+    storage released: bool;
+    storage refunded: bool;
+    storage disputed: bool;
+
+    event Deposited(buyer: address, seller: address, amount: u256);
+    event Released(to: address, amount: u256);
+    event Refunded(to: address, amount: u256);
+    event DisputeOpened(by: address);
+
+    error NotBuyer(caller: address, buyer: address);
+    error NotSeller(caller: address, seller: address);
+    error NotArbiter(caller: address, arbiter: address);
+    error NotParticipant(caller: address);
+    error AlreadyReleased;
+    error AlreadyRefunded;
+    error WrongAmount(sent: u256, required: u256);
+    error DisputeActive;
+
+    init(seller: address, arbiter: address) {
+        self.buyer = msg.sender;
+        self.seller = seller;
+        self.arbiter = arbiter;
+        self.amount = msg.value;
+        self.released = false;
+        self.refunded = false;
+        self.disputed = false;
+
+        if msg.value == 0 { revert WrongAmount(0, 1); }
+
+        emit Deposited(msg.sender, seller, msg.value);
+    }
+
+    pub fn release() {
+        if self.released { revert AlreadyReleased; }
+        if self.refunded { revert AlreadyRefunded; }
+        if self.disputed { revert DisputeActive; }
+        if msg.sender != self.buyer {
+            revert NotBuyer(msg.sender, self.buyer);
+        }
+
+        let payout: u256 = self.amount;
+        self.released = true;
+
+        external {
+            self.seller.transfer(payout);
+        }
+
+        emit Released(self.seller, payout);
+    }
+
+    pub fn openDispute() {
+        if self.released { revert AlreadyReleased; }
+        if self.refunded { revert AlreadyRefunded; }
+        if self.disputed { revert DisputeActive; }
+        if msg.sender != self.buyer && msg.sender != self.seller {
+            revert NotParticipant(msg.sender);
+        }
+
+        self.disputed = true;
+        emit DisputeOpened(msg.sender);
+    }
+
+    pub fn resolve(refundBuyer: bool) {
+        if msg.sender != self.arbiter {
+            revert NotArbiter(msg.sender, self.arbiter);
+        }
+        if self.released { revert AlreadyReleased; }
+        if self.refunded { revert AlreadyRefunded; }
+        if !self.disputed { revert DisputeActive; }
+
+        let payout: u256 = self.amount;
+
+        if refundBuyer {
+            self.refunded = true;
+
+            external {
+                self.buyer.transfer(payout);
+            }
+
+            emit Refunded(self.buyer, payout);
+        } else {
+            self.released = true;
+
+            external {
+                self.seller.transfer(payout);
+            }
+
+            emit Released(self.seller, payout);
+        }
+    }
+}

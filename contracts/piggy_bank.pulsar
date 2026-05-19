@@ -1,0 +1,55 @@
+// piggy_bank.pulsar
+// Deposit any time. Withdraw only after unlock. Once broken, retired forever.
+
+@invariant(self.totalSaved == self.balance)
+contract PiggyBank {
+    storage owner: address;
+    storage unlockTime: u64;
+    storage totalSaved: u256;
+    storage broken: bool;
+
+    event Deposited(from: address, amount: u256, newTotal: u256);
+    event Broken(by: address, amount: u256);
+
+    error TooEarly(unlockTime: u64, now: u64);
+    error AlreadyBroken;
+    error NotOwner(caller: address, owner: address);
+    error EmptyPiggy;
+
+    init(unlockTime: u64) {
+        self.owner = msg.sender;
+        self.unlockTime = unlockTime;
+    }
+
+    receive {
+        if self.broken { revert AlreadyBroken; }
+        self.totalSaved += msg.value;
+        emit Deposited(msg.sender, msg.value, self.totalSaved);
+    }
+
+    pub fn breakPiggy() {
+        if msg.sender != self.owner {
+            revert NotOwner(msg.sender, self.owner);
+        }
+        if self.broken { revert AlreadyBroken; }
+        if block.timestamp < self.unlockTime {
+            revert TooEarly(self.unlockTime, block.timestamp);
+        }
+        if self.totalSaved == 0 { revert EmptyPiggy; }
+
+        let amount: u256 = self.totalSaved;
+
+        self.totalSaved = 0;
+        self.broken = true;
+
+        external {
+            self.owner.transfer(amount);
+        }
+
+        emit Broken(msg.sender, amount);
+    }
+
+    pub view fn saved() -> u256 {
+        return self.totalSaved;
+    }
+}

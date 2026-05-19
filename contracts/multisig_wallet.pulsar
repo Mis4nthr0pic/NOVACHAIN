@@ -1,0 +1,108 @@
+// multisig_wallet.pulsar
+// Basic m-of-n multisig wallet using NOVA smart accounts.
+
+contract MultisigWallet {
+    storage owners: vec<address>;
+    storage required: u64;
+    storage transactionCount: u64;
+    storage transactions: map<u64, Transaction>;
+    storage confirmations: map<(u64, address), bool>;
+
+    struct Transaction {
+        destination: address;
+        amount: u256;
+        executed: bool;
+        data: bytes;
+    }
+
+    event Submission(txId: u64);
+    event Confirmation(txId: u64, sender: address);
+    event Execution(txId: u64);
+    event OwnerAddition(owner: address);
+    event OwnerRemoval(owner: address);
+
+    error NotOwner(caller: address);
+    error AlreadyConfirmed(txId: u64, caller: address);
+    error NotConfirmed(txId: u64, caller: address);
+    error AlreadyExecuted(txId: u64);
+    error InsufficientConfirmations(txId: u64, have: u64, needed: u64);
+    error InvalidRequired(required: u64, ownerCount: u64);
+    error TransactionFailed(txId: u64);
+
+    init(owners: vec<address>, required: u64) {
+        if required == 0 || required > owners.len() {
+            revert InvalidRequired(required, owners.len());
+        }
+
+        self.owners = owners;
+        self.required = required;
+        self.transactionCount = 0;
+    }
+
+    modifier onlyOwner() {
+        if !self.isOwner(msg.sender) { revert NotOwner(msg.sender); }
+    }
+
+    pub fn submitTransaction(destination: address, amount: u256, data: bytes) onlyOwner {
+        let txId: u64 = self.transactionCount;
+        self.transactions[txId] = Transaction {
+            destination: destination,
+            amount: amount,
+            executed: false,
+            data: data,
+        };
+        self.transactionCount += 1;
+
+        emit Submission(txId);
+    }
+
+    pub fn confirmTransaction(txId: u64) onlyOwner {
+        if self.transactions[txId].executed { revert AlreadyExecuted(txId); }
+        if self.confirmations[(txId, msg.sender)] {
+            revert AlreadyConfirmed(txId, msg.sender);
+        }
+
+        self.confirmations[(txId, msg.sender)] = true;
+        emit Confirmation(txId, msg.sender);
+    }
+
+    pub fn executeTransaction(txId: u64) onlyOwner {
+        let tx: Transaction = self.transactions[txId];
+
+        if tx.executed { revert AlreadyExecuted(txId); }
+
+        let confirmCount: u64 = self.getConfirmationCount(txId);
+        if confirmCount < self.required {
+            revert InsufficientConfirmations(txId, confirmCount, self.required);
+        }
+
+        self.transactions[txId].executed = true;
+
+        external {
+            tx.destination.transfer(tx.amount);
+        }
+
+        emit Execution(txId);
+    }
+
+    pub view fn isOwner(addr: address) -> bool {
+        for let i: u64 = 0; i < self.owners.len(); i += 1 {
+            if self.owners[i] == addr { return true; }
+        }
+        return false;
+    }
+
+    pub view fn getConfirmationCount(txId: u64) -> u64 {
+        let count: u64 = 0;
+        for let i: u64 = 0; i < self.owners.len(); i += 1 {
+            if self.confirmations[(txId, self.owners[i])] {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    pub view fn isConfirmed(txId: u64) -> bool {
+        return self.getConfirmationCount(txId) >= self.required;
+    }
+}

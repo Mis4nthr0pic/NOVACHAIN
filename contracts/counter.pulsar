@@ -1,0 +1,42 @@
+// counter.pulsar
+// Simple counter contract demonstrating basic Pulsar syntax.
+
+contract Counter {
+    storage owner: address;
+    storage count: u256;
+
+    event Incremented(by: address, newValue: u256);
+    event Decremented(by: address, newValue: u256);
+    event Reset(by: address);
+
+    error CounterUnderflow;
+    error NotOwner(caller: address, owner: address);
+
+    init() {
+        self.owner = msg.sender;
+        self.count = 0;
+    }
+
+    pub fn increment() {
+        self.count += 1;
+        emit Incremented(msg.sender, self.count);
+    }
+
+    pub fn decrement() {
+        if self.count == 0 { revert CounterUnderflow; }
+        self.count -= 1;
+        emit Decremented(msg.sender, self.count);
+    }
+
+    pub fn reset() {
+        if msg.sender != self.owner {
+            revert NotOwner(msg.sender, self.owner);
+        }
+        self.count = 0;
+        emit Reset(msg.sender);
+    }
+
+    pub view fn getCount() -> u256 {
+        return self.count;
+    }
+}

@@ -1,0 +1,92 @@
+// btc_random_lottery.pulsar
+// Uses oracle price feed and native randomness beacon.
+
+@invariant(self.reserve == self.balance)
+contract BtcRandomLottery {
+    storage owner: address;
+    storage ticketPrice: u256;
+    storage reserve: u256;
+    storage btcBullThreshold: u256;
+    storage maxOracleAge: u64;
+    storage paused: bool;
+
+    event TicketPlayed(
+        player: address,
+        btcPrice: u256,
+        roll: u256,
+        won: bool,
+        payout: u256
+    );
+
+    error Paused;
+    error WrongTicketPrice(sent: u256, required: u256);
+    error StaleOracle(updatedAt: u64, now: u64);
+    error LowOracleConfidence(confidence: u256);
+    error InsufficientReserve(needed: u256, available: u256);
+
+    init(ticketPrice: u256, btcBullThreshold: u256, maxOracleAge: u64) {
+        self.owner = msg.sender;
+        self.ticketPrice = ticketPrice;
+        self.btcBullThreshold = btcBullThreshold;
+        self.maxOracleAge = maxOracleAge;
+        self.paused = false;
+    }
+
+    pub fn play(salt: bytes32) {
+        if self.paused { revert Paused; }
+
+        if msg.value != self.ticketPrice {
+            revert WrongTicketPrice(msg.value, self.ticketPrice);
+        }
+
+        self.reserve += msg.value;
+
+        let btc = oracle.price("BTC/USD");
+
+        if block.timestamp - btc.updatedAt > self.maxOracleAge {
+            revert StaleOracle(btc.updatedAt, block.timestamp);
+        }
+
+        if btc.confidence < 95 {
+            revert LowOracleConfidence(btc.confidence);
+        }
+
+        let roll: u256 = random.uniform(1, 100, salt);
+
+        let payout: u256 = 0;
+        let won: bool = false;
+
+        if btc.value >= self.btcBullThreshold {
+            if roll <= 10 {
+                won = true;
+                payout = self.ticketPrice * 10;
+            }
+        } else {
+            if roll <= 5 {
+                won = true;
+                payout = self.ticketPrice * 10;
+            }
+        }
+
+        if won {
+            if self.reserve < payout {
+                revert InsufficientReserve(payout, self.reserve);
+            }
+
+            self.reserve -= payout;
+
+            external {
+                msg.sender.transfer(payout);
+            }
+        }
+
+        emit TicketPlayed(msg.sender, btc.value, roll, won, payout);
+    }
+
+    pub fn setPaused(paused: bool) {
+        if msg.sender != self.owner {
+            revert;
+        }
+        self.paused = paused;
+    }
+}

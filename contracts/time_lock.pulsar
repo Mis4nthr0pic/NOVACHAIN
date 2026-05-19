@@ -1,0 +1,86 @@
+// time_lock.pulsar
+// Timelock contract for delayed execution of governance actions.
+
+contract Timelock {
+    storage admin: address;
+    storage minDelay: u64;
+    storage queued: map<bytes32, bool>;
+
+    event Queued(
+        txHash: bytes32,
+        target: address,
+        amount: u256,
+        timestamp: u64
+    );
+    event Executed(txHash: bytes32, target: address, amount: u256);
+    event Cancelled(txHash: bytes32);
+
+    error NotAdmin(caller: address, admin: address);
+    error AlreadyQueued(txHash: bytes32);
+    error NotQueued(txHash: bytes32);
+    error TooEarly(executeAt: u64, now: u64);
+    error TooLate;
+
+    init(minDelay: u64) {
+        self.admin = msg.sender;
+        self.minDelay = minDelay;
+    }
+
+    fn computeTxHash(target: address, amount: u256, data: bytes) -> bytes32 {
+        return blake3(
+            "NOVA_TIMELOCK_V1" ||
+            target ||
+            amount ||
+            keccak256(data)
+        );
+    }
+
+    pub fn queue(target: address, amount: u256, data: bytes) {
+        if msg.sender != self.admin {
+            revert NotAdmin(msg.sender, self.admin);
+        }
+
+        let txHash: bytes32 = self.computeTxHash(target, amount, data);
+
+        if self.queued[txHash] { revert AlreadyQueued(txHash); }
+
+        self.queued[txHash] = true;
+
+        emit Queued(txHash, target, amount, block.timestamp + self.minDelay);
+    }
+
+    pub fn execute(target: address, amount: u256, data: bytes) {
+        if msg.sender != self.admin {
+            revert NotAdmin(msg.sender, self.admin);
+        }
+
+        let txHash: bytes32 = self.computeTxHash(target, amount, data);
+
+        if !self.queued[txHash] { revert NotQueued(txHash); }
+
+        let executeAt: u64 = block.timestamp;
+
+        if executeAt < block.timestamp {
+            revert TooEarly(executeAt, block.timestamp);
+        }
+
+        self.queued[txHash] = false;
+
+        external {
+            target.transfer(amount);
+        }
+
+        emit Executed(txHash, target, amount);
+    }
+
+    pub fn cancel(txHash: bytes32) {
+        if msg.sender != self.admin {
+            revert NotAdmin(msg.sender, self.admin);
+        }
+
+        if !self.queued[txHash] { revert NotQueued(txHash); }
+
+        self.queued[txHash] = false;
+        emit Cancelled(txHash);
+    }
+}

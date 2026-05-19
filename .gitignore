@@ -1,0 +1,32 @@
+# Build artifacts
+/target/
+/build/
+/dist/
+*.wasm
+*.wat
+
+# Dependencies
+/node_modules/
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# NovaVM bytecode cache
+.cache/

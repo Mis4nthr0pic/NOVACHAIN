@@ -1,0 +1,79 @@
+// simple_token.pulsar
+// A basic NOVA-native token with bounded, scoped approvals.
+// Follows NRC-10 Token Capability Standard.
+
+contract SimpleToken {
+    storage name: string;
+    storage symbol: string;
+    storage decimals: u8;
+    storage totalSupply: u256;
+    storage balances: map<address, u256>;
+    storage allowances: map<(address, address), u256>;
+
+    event Transfer(from: address, to: address, amount: u256);
+    event Approval(owner: address, spender: address, amount: u256);
+
+    error InsufficientBalance(requested: u256, available: u256);
+    error InsufficientAllowance(requested: u256, allowed: u256);
+    error ZeroAddress;
+    error AmountZero;
+
+    init(name: string, symbol: string, decimals: u8, initialSupply: u256) {
+        self.name = name;
+        self.symbol = symbol;
+        self.decimals = decimals;
+        self.totalSupply = initialSupply;
+        self.balances[msg.sender] = initialSupply;
+        emit Transfer(address(0), msg.sender, initialSupply);
+    }
+
+    pub view fn balanceOf(account: address) -> u256 {
+        return self.balances[account];
+    }
+
+    pub fn transfer(to: address, amount: u256) {
+        if to == address(0) { revert ZeroAddress; }
+        if amount == 0 { revert AmountZero; }
+
+        let senderBalance: u256 = self.balances[msg.sender];
+        if senderBalance < amount {
+            revert InsufficientBalance(amount, senderBalance);
+        }
+
+        self.balances[msg.sender] -= amount;
+        self.balances[to] += amount;
+
+        emit Transfer(msg.sender, to, amount);
+    }
+
+    pub fn approve(spender: address, amount: u256) {
+        if spender == address(0) { revert ZeroAddress; }
+        self.allowances[(msg.sender, spender)] = amount;
+        emit Approval(msg.sender, spender, amount);
+    }
+
+    pub fn transferFrom(from: address, to: address, amount: u256) {
+        if to == address(0) { revert ZeroAddress; }
+        if amount == 0 { revert AmountZero; }
+
+        let allowed: u256 = self.allowances[(from, msg.sender)];
+        if allowed < amount {
+            revert InsufficientAllowance(amount, allowed);
+        }
+
+        let fromBalance: u256 = self.balances[from];
+        if fromBalance < amount {
+            revert InsufficientBalance(amount, fromBalance);
+        }
+
+        self.allowances[(from, msg.sender)] -= amount;
+        self.balances[from] -= amount;
+        self.balances[to] += amount;
+
+        emit Transfer(from, to, amount);
+    }
+
+    pub view fn allowance(owner: address, spender: address) -> u256 {
+        return self.allowances[(owner, spender)];
+    }
+}

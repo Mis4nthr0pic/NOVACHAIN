@@ -1,0 +1,36 @@
+// vulnerable_vault.pulsar
+// Demonstrates a business-logic bug that Pulsar cannot prevent.
+// Anyone can call setOwner and take over the vault.
+
+contract VulnerableVault {
+    storage owner: address;
+    storage totalDeposits: u256;
+
+    error NotOwner(caller: address, owner: address);
+
+    init() {
+        self.owner = msg.sender;
+    }
+
+    receive {
+        self.totalDeposits += msg.value;
+    }
+
+    // Vulnerable: anyone can become owner.
+    pub fn setOwner(newOwner: address) {
+        self.owner = newOwner;
+    }
+
+    pub fn withdrawAll() {
+        if msg.sender != self.owner {
+            revert NotOwner(msg.sender, self.owner);
+        }
+
+        let amount: u256 = self.totalDeposits;
+        self.totalDeposits = 0;
+
+        external {
+            self.owner.transfer(amount);
+        }
+    }
+}
