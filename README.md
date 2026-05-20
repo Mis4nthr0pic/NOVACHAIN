@@ -2,9 +2,9 @@
 
 **Bitcoin-grade settlement. Ethereum-grade programmability. Smart contracts with the footguns removed.**
 
-**Version:** v0.5  
+**Version:** v0.6  
 **Status:** Concept / architecture draft  
-**Scope:** Full design document for NOVA, including base protocol architecture, Pulsar, NovaVM, accounts, safety standards, bridge/oracle/custody risk models, human-visible signing security, token safety, governance safety, enforcement layers, and alpha scope.
+**Scope:** Full design document for NOVA, including base protocol architecture, Pulsar, NovaVM, accounts, safety standards, bridge/oracle/custody risk models, human-visible signing security, token safety, governance safety, enforcement layers, formal verification, monitoring, quantum enforcement, and alpha scope.
 
 ---
 
@@ -67,7 +67,7 @@ Ethereum gave the world programs no company can shut down.
 
 NOVA combines both with a third requirement:
 
-**Smart contracts should be safer by construction.**
+**Smart contracts should be safer by construction — and where full construction safety is impossible, they must be provably bounded, visible, and monitorable.**
 
 Not safer because every developer remembered every checklist.
 
@@ -89,7 +89,7 @@ Safer because tokens cannot hide dangerous behavior.
 
 Safer because governance proposals expose what they can actually do.
 
-NOVA is a permissionless Layer 1 blockchain with proof-of-work mining, BlockDAG ordering, deterministic finality, a deterministic WASM-based VM, and a new smart contract language called Pulsar.
+NOVA is a permissionless Layer 1 blockchain with proof-of-work mining, BlockDAG ordering, deterministic Aurora finality, a deterministic WASM-based VM (NovaVM), and a new safety-first smart contract language called Pulsar.
 
 NOVA treats historical crypto failures as design requirements.
 
@@ -116,9 +116,12 @@ The thesis is simple:
 | VM                    | NovaVM, deterministic WASM subset                       |
 | Language              | Pulsar                                                  |
 | Account model         | Smart accounts from genesis                             |
-| Native safety model   | Typed intents, capability permissions, account policies |
+| Native safety model   | Typed intents, capability permissions, account policies, formal verification |
 | Premine               | None                                                    |
 | Foundation allocation | None at protocol level                                  |
+| Formal verification   | Pulsar Prover (mandatory for high-value)                |
+| Privacy               | Optional shielded intents (hybrid ZK)                   |
+| Monitoring            | On-chain anomaly detection hooks                        |
 
 Geometric supply:
 
@@ -218,6 +221,8 @@ make signatures meaningful
 make contracts explain themselves
 ```
 
+**Formal where possible, visible & bounded everywhere else.**
+
 ---
 
 # 5. Enforcement layers
@@ -304,6 +309,19 @@ not enforceable
 
 This makes the safety model honest.
 
+## 5.5 AI-Assisted & Runtime Monitoring Layer
+
+A fourth layer supplements static rules with adaptive monitoring.
+
+* AI-assisted formal proof generation + human audit loop.
+* On-chain anomaly detection (unusual velocity, oracle spikes, capability abuse patterns) that can trigger automatic pauses or alerts.
+* Continuous fuzzing/symbolic execution results published as on-chain metadata.
+* This layer catches emergent behaviors that static rules cannot yet cover.
+
+This is not a replacement for consensus, account, or interface enforcement.
+
+It is an adaptive safety net for unknown unknowns.
+
 ---
 
 # 6. Alpha scope
@@ -328,6 +346,8 @@ It focuses on the safety model:
 8. Hack-class threat matrix
 9. Governance proposal intent prototype
 10. Verified app manifest draft
+11. Pulsar Prover MVP
+12. Monitoring simulator
 
 Alpha success means:
 
@@ -375,6 +395,9 @@ nova/
 ├── nova-risk/         # risk labels and safety metadata
 ├── nova-governance/   # proposal intents, timelocks, simulations
 ├── nova-tokens/       # token traits, token capabilities, behavior locks
+├── nova-formal/       # Pulsar Prover, invariant checker
+├── nova-monitoring/   # anomaly detection
+├── nova-zk/           # shielded intents
 ├── pulsar-compiler/   # Pulsar -> NovaVM bytecode
 └── pulsar-stdlib/     # safe primitives and audited modules
 ```
@@ -447,6 +470,12 @@ NOVA uses per-block difficulty adjustment with a smoothed moving average.
 
 This avoids long adjustment windows and lets the network react quickly to hashrate changes.
 
+## 8.3 Enhanced consensus monitoring
+
+* Orphan rate monitoring + automatic difficulty compensation.
+* Optional ghost-tip weighting during bootstrap mode to reduce wasted work.
+* Aurora committee reputation scoring based on participation history.
+
 ---
 
 # 9. Aurora finality
@@ -500,6 +529,8 @@ Missed votes may lose rewards.
 
 Double-signing is slashable.
 
+Partial slashing applies to liveness failures: missed votes result in proportional reward reduction rather than full slashing.
+
 ## 9.3 Reward split
 
 Each block reward is split:
@@ -516,6 +547,14 @@ Aurora may use BLS signatures for speed, but long-term checkpoint durability sho
 BLS is a speed optimization.
 
 Post-quantum checkpoint certificates are the long-term finality root.
+
+## 9.5 Post-quantum fallback enforcement
+
+Post-quantum fallback certificates become mandatory after 2030.
+
+Classical-only finality signatures are deprecated on a defined timeline.
+
+L3+ accounts must rotate to hybrid or post-quantum signature schemes within migration windows defined by NRC-42.
 
 ---
 
@@ -540,6 +579,8 @@ Consensus execution rules:
 * Imports are whitelisted.
 * Crypto uses fixed-cost precompiles.
 * Modules are validated before deployment.
+
+NovaVM supports formal symbolic execution hooks for the Pulsar Prover pipeline, allowing verification conditions to be checked against execution traces.
 
 Different node implementations must run the same bytecode and produce the same state root.
 
@@ -761,6 +802,36 @@ NOVA still needs tests, audits, formal specs, bug bounties, and careful design.
 | Blind signing             | Opaque calldata         | Typed intent signing               |
 | Token misbehavior         | Hidden trait surprises  | Token traits standard              |
 
+## 12.6 Formal Verification Pipeline (Pulsar Prover)
+
+Pulsar ships with a built-in specification language for formal verification.
+
+Specifications are attached to functions and contracts:
+
+```rust
+@invariant(self.totalSaved == self.balance)
+@spec "withdraw only after unlock and owner approval"
+pub fn breakPiggy() { ... }
+```
+
+The `pulsar-prover` toolchain (Lean4 + AI backend) generates and checks verification conditions against the contract's NovaVM bytecode.
+
+Verification labels:
+
+```txt
+Standard           — compiled, basic safety checks pass
+Formally Verified  — invariants and specs proven by pulsar-prover
+High-Assurance     — formally verified + independent audit + reproducible build
+```
+
+High-assurance contracts require `proven: true` in their NRC-8 verification record (NRC-40).
+
+Formal verification is not mandatory for all contracts.
+
+It is mandatory for contracts that hold large values, manage governance, control bridges, or custody user funds.
+
+The verification pipeline is part of the alpha scope (Phase 0) and integrates with the `nova-formal` crate.
+
 ---
 
 # 13. Gas and fees
@@ -775,6 +846,7 @@ NOVA meters four resources independently:
 | State R/W    | Reads and writes     | Database I/O             |
 | State growth | New persistent bytes | Long-term storage burden |
 | Bandwidth    | Calldata and logs    | Network propagation      |
+| Proof verify | Formal verification  | Proof checking cost      |
 
 This makes costs visible.
 
@@ -1396,6 +1468,19 @@ If classical crypto breaks later, ML-KEM protects the recorded traffic.
 If ML-KEM has a future flaw, X25519 still protects against classical attackers today.
 
 The attacker must break both layers.
+
+## 21.2 Post-Quantum Migration Enforcement
+
+NRC-2 now includes mandatory deprecation timelines for classical-only signature schemes.
+
+Migration requirements:
+
+* L3+ accounts must rotate to hybrid or post-quantum signature schemes within defined windows.
+* On-chain quantum readiness score tracks each account's migration status.
+* Accounts that do not migrate within the window receive visible warnings in wallets and explorers.
+* After the migration deadline, classical-only signatures are downgraded in security level but remain valid for existing funds.
+
+The quantum readiness score is part of NRC-42 and is displayed alongside account security levels.
 
 ---
 
@@ -2053,6 +2138,26 @@ The laptop may lie.
 
 The signing device should not.
 
+## 29.6 Hardware + Biometric Attestation Extensions
+
+NOVA supports multi-factor intent signing beyond traditional hardware wallets:
+
+* FIDO2/WebAuthn attestation for consumer devices.
+* Hardware enclave attestation (TEE) for server-side signing.
+* Optional biometric hash attestation (stored as a device credential, never transmitted).
+* Multi-factor intent signing: combination of hardware + biometric + knowledge factors.
+* "Secure Element Required" flag for L4 accounts — rejects signatures from devices without a secure element.
+
+Biometric data never leaves the device.
+
+The chain only sees an attestation that a biometric check was performed, not the biometric data itself.
+
+Device health checks can verify:
+
+* Firmware version is not known-compromised.
+* Secure element is present and active.
+* Device has not been flagged by manufacturer revocation lists.
+
 ---
 
 # 30. Threat model from historical crypto failures
@@ -2122,6 +2227,15 @@ The honest claim is stronger:
 ```txt
 This system makes common historical failure modes structurally harder, more visible, more bounded, or impossible by default.
 ```
+
+## 30.3 Expanded threat entries
+
+The threat model is updated to include emerging attack surfaces:
+
+* **AI-generated attacks**: AI-assisted vulnerability discovery and exploit generation. Mitigated by formal verification (Pulsar Prover) and continuous fuzzing.
+* **Formal-tool supply-chain risk**: Compromised verification tooling that produces false proofs. Mitigated by independent prover implementations and reproducible verification.
+* **Monitoring evasion**: Attackers who learn anomaly detection patterns and avoid triggering them. Mitigated by non-deterministic monitoring thresholds and independent monitoring nodes.
+* **Post-quantum migration apathy**: Users and protocols that delay migrating to quantum-safe cryptography. Mitigated by NRC-42 enforcement timelines and on-chain quantum readiness scores.
 
 ---
 
@@ -2425,6 +2539,8 @@ A bridge must declare:
 
 NOVA should not let all of these look equally safe.
 
+Light-client and ZK bridges should declare their formal verification status. Bridges that have been formally verified against their specification receive a higher trust rating in the bridge risk registry (NRC-27).
+
 ## 35.2 Wrapped asset mint limits
 
 Wrapped assets should support:
@@ -2644,6 +2760,7 @@ struct TokenTraits {
     oracleDependent: bool;
     fixedSupply: bool;
     paymaster: bool;
+    formallyVerified: bool;
 }
 ```
 
@@ -2862,7 +2979,13 @@ But governance contracts that ignore this should be visibly flagged.
 
 ## 40.4 Proposal simulation
 
-Every executable proposal should publish a deterministic simulation:
+Every executable proposal should publish a deterministic simulation. For proposals that affect high-value contracts, a formal proof of safety properties may also be required:
+
+* state diff if executed
+* asset movements
+* upgrade effects
+* permission changes
+* formal verification of invariant preservation (optional, mandatory for critical proposals)
 
 * state diff if executed
 * asset movements
@@ -3007,6 +3130,17 @@ NRC-37  Governance Proposal Intent Hash
 NRC-38  Enforcement Layer Classification
 ```
 
+## 42.3 Formal verification & monitoring NRCs
+
+```txt
+NRC-39  Pulsar Formal Specification Language
+NRC-40  Pulsar Prover & High-Assurance Certification
+NRC-41  On-Chain Anomaly Detection & Monitoring Hooks
+NRC-42  Post-Quantum Migration Standard
+NRC-43  Shielded Intent Privacy (Optional)
+NRC-44  AI-Assisted Verification Guidelines
+```
+
 Most important safety stack:
 
 ```txt
@@ -3024,6 +3158,9 @@ NRC-29  Safe governance standard
 NRC-32  Contract safety metadata
 NRC-36  Token traits standard
 NRC-37  Governance proposal intent hash
+NRC-39  Pulsar formal specification language
+NRC-40  Pulsar Prover & high-assurance certification
+NRC-41  On-chain anomaly detection & monitoring hooks
 ```
 
 ---
@@ -3042,6 +3179,8 @@ NRC-37  Governance proposal intent hash
 * Custody account policy simulator
 * Governance proposal intent prototype
 * Verified app manifest draft
+* Pulsar Prover MVP
+* Monitoring simulator
 
 ## Phase 1: Months 0-6
 
@@ -3080,9 +3219,11 @@ NRC-37  Governance proposal intent hash
 
 * Pulsar v1 safety features
 * Formal tooling
+* Pulsar Prover integration
 * NRC-1 to NRC-15 draft implementations
 * Wallets and explorer
 * Risk labels v0
+* Monitoring hooks v0
 
 ## Phase 6: Months 30-36
 
@@ -3094,6 +3235,8 @@ NRC-37  Governance proposal intent hash
 * Verified app manifests
 * Governance safety reference module
 * Token traits enforcement in stdlib
+* Formal verification gates for high-value contracts
+* Post-quantum migration tooling
 
 ## Phase 7: 36+
 
@@ -3101,6 +3244,8 @@ NRC-37  Governance proposal intent hash
 * Audits
 * Multiple implementations
 * Bug bounties
+* Formal verification audit of core protocol
+* Post-quantum readiness review
 * Mainnet readiness review
 * Mainnet launch: **First Light**
 
@@ -3149,7 +3294,7 @@ Remaining risks:
 
 The strongest honest claim:
 
-**NOVA makes many catastrophic historical smart-contract, signing, custody, oracle, bridge, governance, token, and MEV-related failure modes structurally unreachable, significantly harder to express, harder to hide, more bounded, or slower to execute.**
+**NOVA makes many catastrophic historical smart-contract, signing, custody, oracle, bridge, governance, token, and MEV-related failure modes structurally unreachable, significantly harder to express, harder to hide, more bounded, or slower to execute — and where full prevention is impossible, provably bounded and continuously monitored.**
 
 ---
 
@@ -3176,7 +3321,10 @@ Cultural pitch:
 Bitcoin gave us unstoppable money.
 Ethereum gave us unstoppable programs.
 NOVA makes those programs harder to break.
+Prove it.
 ```
+
+Formal verification and reproducible builds are cultural requirements, not optional extras.
 
 Shorter:
 
@@ -3199,13 +3347,14 @@ It should make bad governance harder to execute.
 
 # 46. Closing
 
-NOVA is an attempt to combine five ideas:
+NOVA is an attempt to combine six ideas:
 
 1. Bitcoin's permissionless proof-of-work security.
 2. Ethereum's programmable application layer.
 3. A safety-first language and VM where catastrophic bug classes are removed by construction.
 4. A human-visible signing model where dangerous actions cannot hide behind opaque bytes.
 5. A protocol surface where tokens, oracles, bridges, governance, custody, and upgrades declare their risks before users touch them.
+6. Accessible formal verification that gives mathematical confidence where it matters most.
 
 The hard part is not making another fast chain.
 
@@ -3234,6 +3383,9 @@ That requires:
 * Token traits declared and enforced
 * Governance actions made visible before they execute
 * MEV assumptions disclosed instead of hidden
+* Formal verification accessible to developers, not just researchers
+* On-chain monitoring that catches what static rules miss
+* Post-quantum migration built into the protocol timeline
 
 NOVA's north star:
 
@@ -3250,5 +3402,9 @@ The wallet should expose the danger.
 The signer should understand the action.
 
 The protocol should know what kind of token it is holding.
+
+The formal tools should give mathematical confidence where it matters most.
+
+The monitoring layer should watch what humans miss.
 
 That is NOVA.
