@@ -36,6 +36,9 @@ struct OraclePrice {
     updatedAt: u64;
     confidence: u256;
     sources: u16;
+    twapWindow: u64;
+    liquidityDepth: u256;
+    deviationBps: u32;
 }
 ```
 
