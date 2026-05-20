@@ -696,7 +696,7 @@ That is the point.
 // piggy_bank.pulsar
 // Deposit any time. Withdraw only after unlock. Once broken, retired forever.
 
-@invariant(self.totalSaved == self.balance)
+@invariant(self.totalSaved <= self.balance)
 contract PiggyBank {
     storage owner: address;
     storage unlockTime: u64;
@@ -758,6 +758,35 @@ What this demonstrates:
 * Contract invariant.
 * Effects before interactions.
 * External calls isolated inside `external { }`.
+* Safe invariant: uses `<=` not `==` with `self.balance` (see section 12.11).
+
+## 12.11 Invariant anti-pattern: strict balance equality
+
+A critical anti-pattern in smart contract design is using strict equality with `self.balance`:
+
+```rust
+// DANGEROUS — bricks the contract permanently
+@invariant(self.totalSaved == self.balance)
+```
+
+Attack vector:
+
+* An attacker pre-funds the contract address before deployment. The contract is born with `self.balance > 0` but `self.totalSaved == 0`. The invariant fails. Every function reverts. All funds are locked forever.
+* A miner sends block rewards to the contract address. `self.balance` increases without any `receive` call. The invariant breaks.
+* Any protocol-level forced transfer mechanism creates the same risk.
+
+The cost of the attack is 1 centova. The damage is permanent fund lock.
+
+Correct pattern:
+
+```rust
+// SAFE — allows unexpected balance increases without bricking
+@invariant(self.totalSaved <= self.balance)
+```
+
+This guarantees the contract never tracks more than it holds, but does not break if the balance is higher than expected.
+
+Pulsar's compiler should warn when an invariant uses `==` with `self.balance` or any field that can be influenced by external balance changes.
 
 ## 12.2 Reentrancy model
 
@@ -881,7 +910,7 @@ Pulsar ships with a built-in specification language for formal verification.
 Specifications are attached to functions and contracts:
 
 ```rust
-@invariant(self.totalSaved == self.balance)
+@invariant(self.totalSaved <= self.balance)
 @spec "withdraw only after unlock and owner approval"
 pub fn breakPiggy() { ... }
 ```
@@ -1408,7 +1437,7 @@ if btc.deviationBps > 500 {
 ## 19.2 BTC oracle + randomness example
 
 ```rust
-@invariant(self.reserve == self.balance)
+@invariant(self.reserve <= self.balance)
 contract BtcRandomLottery {
     storage owner: address;
     storage ticketPrice: u256;

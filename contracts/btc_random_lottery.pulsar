@@ -1,7 +1,7 @@
 // btc_random_lottery.pulsar
 // Uses oracle price feed and native randomness beacon.
 
-@invariant(self.reserve == self.balance)
+@invariant(self.reserve <= self.balance)
 contract BtcRandomLottery {
     storage owner: address;
     storage ticketPrice: u256;

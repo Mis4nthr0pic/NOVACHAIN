@@ -1,7 +1,7 @@
 // piggy_bank.pulsar
 // Deposit any time. Withdraw only after unlock. Once broken, retired forever.
 
-@invariant(self.totalSaved == self.balance)
+@invariant(self.totalSaved <= self.balance)
 contract PiggyBank {
     storage owner: address;
     storage unlockTime: u64;
