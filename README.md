@@ -413,9 +413,22 @@ Key architectural choices:
 * Protocol standards are defined through NRCs.
 * Wallet safety is part of the protocol design, not an afterthought.
 
----
+## 7.1 Supply chain security
 
-# 8. Consensus: PoW + BlockDAG
+NOVA is a Rust workspace with dozens of crates and hundreds of external dependencies.
+
+A compromise in an obscure dependency (serialization library, crypto primitive, encoding crate) can bypass every safety guarantee built into the protocol.
+
+Defenses:
+
+* **Pinned dependencies**: All crates use strict `Cargo.lock` pinning. No floating versions in production builds.
+* **Dependency auditing**: Every dependency is audited before inclusion. Audit results are recorded in the repository.
+* **Reproducible dependency builds**: Full dependency tree must build deterministically. Two independent builders must produce byte-identical binaries.
+* **Vulnerability monitoring**: Automated continuous scanning of all dependencies for known vulnerabilities. Critical vulns trigger immediate patches and node update alerts.
+* **Minimal dependency surface**: Every external dependency must justify its inclusion. Prefer Rust standard library and in-house implementations for security-critical paths.
+* **Dependency sandboxing**: Dependencies do not get access to filesystem, network, or environment variables at compile time unless explicitly granted.
+
+---
 
 Pure Nakamoto consensus at 400 ms blocks breaks down.
 
@@ -475,6 +488,17 @@ This avoids long adjustment windows and lets the network react quickly to hashra
 * Orphan rate monitoring + automatic difficulty compensation.
 * Optional ghost-tip weighting during bootstrap mode to reduce wasted work.
 * Aurora committee reputation scoring based on participation history.
+
+## 8.4 Eclipse attack and network partitioning resistance
+
+At 400 ms block times, NOVA requires fast, reliable network propagation. An attacker with a botnet could attempt to eclipse Aurora committee members or dominant miners, feeding them a distorted view of the DAG.
+
+Defenses:
+
+* **Diversity requirement**: Nodes must maintain connections to a minimum number of diverse peers across independent network segments. Sybil-resistant peer selection based on proof-of-work identity or long-lived reputation.
+* **Partition detection**: If a node detects that its view of the DAG diverges significantly from its peers' views, it enters a degraded mode that refuses to finalize transactions until partition resolution.
+* **Checkpoint cross-validation**: Aurora finality checkpoints are independently verified by non-committee nodes. A forged checkpoint cannot survive cross-validation.
+* **Network partition recovery**: If the network partitions, each partition continues operating but refuses to finalize. Mergers are handled conservatively with the heaviest-weight DAG winning, followed by Aurora re-finalization.
 
 ---
 
@@ -556,6 +580,18 @@ Classical-only finality signatures are deprecated on a defined timeline.
 
 L3+ accounts must rotate to hybrid or post-quantum signature schemes within migration windows defined by NRC-42.
 
+## 9.6 Cryptographic implementation security
+
+Aurora's signature aggregation and checkpoint scheme relies on correct cryptographic implementations. A bug in the math can allow forged checkpoints.
+
+Defenses:
+
+* **Conservative crypto**: NOVA uses well-established, heavily reviewed cryptographic primitives. Novel or experimental schemes are not used for consensus-critical paths.
+* **Multi-implementation verification**: All consensus-critical cryptographic operations (signature verification, checkpoint aggregation, hash computations) have at least two independent implementations. Both must agree on every result. A disagreement halts finality.
+* **Constant-time implementations**: All cryptographic operations are implemented in constant time to prevent timing side-channels.
+* **Formal verification of critical paths**: The signature aggregation and verification logic is a target for formal verification. The math must be proven correct, not just tested.
+* **Crypto audit track**: All cryptographic implementations undergo independent security audit by specialized cryptography auditors before mainnet inclusion.
+
 ---
 
 # 10. NovaVM
@@ -583,6 +619,42 @@ Consensus execution rules:
 NovaVM supports formal symbolic execution hooks for the Pulsar Prover pipeline, allowing verification conditions to be checked against execution traces.
 
 Different node implementations must run the same bytecode and produce the same state root.
+
+## 10.1 VM safety and host call sandboxing
+
+The gap between Pulsar's language guarantees and actual NovaVM execution is a critical trust boundary.
+
+NOVA treats this gap as a first-class security surface.
+
+**Compiler soundness**: The Pulsar compiler must preserve the language's safety guarantees when lowering to WASM bytecode. If the compiler inserts incorrect barrier instructions for `external { }` blocks, or fails to enforce checked arithmetic at the WASM level, Pulsar's safety guarantees become illusions.
+
+Defenses:
+
+* **Reference interpreter**: A verified reference interpreter runs alongside the compiler output. If the reference interpreter and the compiled WASM disagree on any execution, the contract is rejected.
+* **Bytecode verification**: Before deployment, NovaVM validates that compiled bytecode respects Pulsar's safety rules at the WASM level — not just at the source level. This includes verifying that state writes cannot occur after external calls, and that arithmetic operations include overflow checks.
+* **Compiler testing pipeline**: Every compiler release is tested against a corpus of adversarial Pulsar programs designed to find soundness gaps. Differential fuzzing compares compiler output against the reference interpreter.
+
+**Host call sandboxing**: Precompiles and host functions execute outside the WASM sandbox with elevated privileges. A single memory safety bug in a precompile could enable VM escape.
+
+Defenses:
+
+* **Strict sandbox boundary**: Host calls communicate with WASM only through copy-in/copy-out buffers. No shared memory. No raw pointer passing.
+* **Memory-safe Rust**: All precompiles are implemented in safe Rust. Unsafe code blocks in precompiles are prohibited without exception and a separate audit track.
+* **Per-precompile audit**: Every precompile undergoes independent security audit before mainnet inclusion. Audit results are published on-chain.
+* **Precompile fuzzing**: Continuous fuzzing of all precompile implementations with AddressSanitizer and MemorySanitizer enabled in CI.
+* **Input validation**: Host functions validate all inputs before processing. No precompile trusts WASM-generated values without bounds checking.
+
+## 10.2 WASM runtime hardening
+
+A zero-day in the WASM runtime itself could allow a carefully crafted contract to escape the sandbox and access node memory directly.
+
+Defenses:
+
+* **No JIT compilation**: NovaVM does not use Just-In-Time compilation. All WASM is executed through a verified interpreter or ahead-of-time compiled with bounds checks preserved. JIT introduces an entire class of speculative execution and code generation attacks that NOVA refuses to accept.
+* **Interpreted-only fallback**: If a node detects unexpected behavior in the AOT compiler path, it falls back to pure interpretation. Performance loss is acceptable; consensus failure is not.
+* **Sandbox escape response**: If a sandbox escape is ever discovered, the protocol has a pre-planned response: halt block production, patch the runtime through NRC-9 emergency procedure, and re-validate all deployed contracts against the patched runtime.
+* **Continuous WASM runtime fuzzing**: The WASM interpreter is continuously fuzzed with AddressSanitizer and MemorySanitizer. Any memory violation, no matter how small, is treated as a critical security bug.
+* **Multi-runtime verification**: At least two independent WASM runtime implementations must agree on execution results. A disagreement halts the node and alerts the network.
 
 Determinism is not a feature.
 
@@ -831,6 +903,47 @@ Formal verification is not mandatory for all contracts.
 It is mandatory for contracts that hold large values, manage governance, control bridges, or custody user funds.
 
 The verification pipeline is part of the alpha scope (Phase 0) and integrates with the `nova-formal` crate.
+
+## 12.7 Prover soundness and integrity
+
+The Pulsar Prover is itself a security-critical component. A compromised or buggy prover that issues false proofs is worse than no prover — it gives false confidence.
+
+**Soundness bugs**: If the prover can be tricked into issuing a valid proof for a contract that violates its specifications, the "Formally Verified" label becomes a weapon against users.
+
+Defenses:
+
+* **Proof checking, not just proof generation**: The chain does not trust proof generation. It runs proof checking — a simpler, more auditable process that verifies a proof is valid. Proof checking is much easier to get right than proof generation.
+* **Independent prover implementations**: At least two independent implementations of the prover must agree on the verification result. A proof is only accepted if both provers independently confirm it.
+* **AI output is advisory**: AI-assisted proof generation produces candidate proofs. Every AI-generated proof is verified by a deterministic proof checker. The AI cannot skip the checking step.
+* **Prover version pinning**: Proofs declare which prover version generated them. If a prover version is later found to have a soundness bug, all proofs from that version are automatically downgraded from "Formally Verified" to "Standard" in the NRC-8 registry.
+* **Adversarial prover testing**: The prover is continuously tested against a corpus of intentionally incorrect contracts that should fail verification. If any incorrect contract passes, the prover is halted and all affected proofs are flagged.
+
+## 12.9 Historical compiler bug precedents
+
+The idea that a compiler can silently break language-level safety guarantees is not theoretical. It has happened repeatedly.
+
+| Component NOVA | Risk | Historical precedent | NOVA defense |
+|---|---|---|---|
+| Pulsar `external { }` enforcement | Compiler fails to insert reentrancy barrier at WASM level | **Vyper `@nonreentrant` bug** (2023): compiler failed to generate correct locks, Curve Finance drained for millions | Reference interpreter + bytecode verification (section 10.1) |
+| Pulsar optimizer | Optimizer removes safety checks to save gas | **Solidity Yul optimizer bugs**: optimizer incorrectly removed storage writes and memory checks | Optimizer must preserve all safety checks — optimizer passes are verified, not trusted (NRC-45) |
+| Pulsar Prover | Under-constrained formal model misses a condition | **Circom under-constrained circuits**: compiler omitted constraints, allowing invalid proofs | Independent prover implementations + proof checking (section 12.7) |
+| NovaVM runtime | WASM sandbox escape via crafted bytecode | **Multiple WASM engine CVEs**: V8, SpiderMonkey, Wasmer all had sandbox escapes | No JIT, interpreted fallback, continuous fuzzing (section 10.2) |
+
+The pattern is consistent: **language guarantees that survive to the source level but not to the execution level are illusions.**
+
+NOVA's response: every safety guarantee must be verified at the execution level, not just the source level.
+
+## 12.10 Optimizer safety rules
+
+The Pulsar optimizer must never remove or weaken a safety check for performance.
+
+Rules:
+
+* **Checked arithmetic is non-negotiable**: The optimizer cannot replace checked add/sub/mul with unchecked equivalents, even if it can prove the values fit. Proof is not runtime safety.
+* **`external { }` barriers are structural**: The optimizer cannot reorder instructions across an external call boundary, merge state writes with external calls, or eliminate the barrier between them.
+* **Invariant checks are preserved**: `@invariant` checks cannot be optimized away, even if the optimizer believes they always pass.
+* **Optimization whitelist**: Only optimizations that have been formally proven sound against the Pulsar semantics are enabled. "Looks correct" is not sufficient.
+* **Differential testing**: Every optimizer pass is tested by comparing optimized and unoptimized output against the reference interpreter. Any disagreement disables that optimization pass.
 
 ---
 
@@ -1215,6 +1328,17 @@ A miner may influence inclusion or censorship.
 An Aurora committee coalition may attempt liveness or withholding attacks.
 
 The intended design prevents one node from secretly choosing the random result.
+
+## 18.3 DAG grinding resistance
+
+A sophisticated attacker with significant hashrate may attempt to "grind" the BlockDAG structure — selectively including or excluding blocks to influence which transactions are ordered before the Aurora checkpoint, thereby biasing the randomness beacon.
+
+Defenses:
+
+* **VDF post-processing**: The raw beacon output passes through a Verifiable Delay Function before becoming usable randomness. This prevents any party from evaluating the beacon output faster than the VDF delay, even if they can influence the DAG structure.
+* **Multi-source entropy mixing**: The beacon combines entropy from multiple independent sources (Aurora committee signatures, block hash commitments, VDF output) using a collision-resistant combiner. Controlling one source does not control the output.
+* **Min-seed-distance rule**: The protocol enforces a minimum distance between when a transaction is committed and when its randomness is revealed. Grinding that changes DAG ordering within this window does not affect already-committed transactions.
+* **Grinding cost analysis**: The economic cost of grinding should always exceed the expected value of the bias. This is monitored continuously and VDF difficulty is adjusted if grinding becomes economically viable.
 
 ---
 
@@ -2158,6 +2282,20 @@ Device health checks can verify:
 * Secure element is present and active.
 * Device has not been flagged by manufacturer revocation lists.
 
+## 29.7 Hardware diversity and side-channel resistance
+
+Relying on a single hardware vendor or TEE implementation creates a single point of failure.
+
+If one secure element or TEE has a side-channel vulnerability, every L4 account depending on it is exposed.
+
+Defenses:
+
+* **Multi-vendor requirement**: L4 accounts should require signatures from devices produced by at least two independent hardware vendors. A vulnerability in one vendor's implementation does not compromise the account.
+* **No single-TEE trust model**: No security-critical operation should depend on a single TEE. If TEE attestation is used, it must be combined with an independent channel (second device, hardware wallet from different manufacturer, or independent software verifier).
+* **Side-channel mitigation awareness**: The threat model explicitly acknowledges that hardware side-channel attacks (cache timing, power analysis, electromagnetic leakage) exist. The protocol does not pretend they are impossible.
+* **Hardware revocation response**: If a hardware vendor discloses a vulnerability, affected attestation keys are flagged. L4 accounts using compromised hardware enter a mandatory rotation period with reduced limits until new devices are registered.
+* **Intent display on signing device**: The canonical intent must be rendered and confirmed on the signing device's own screen. The host computer's display is never trusted as the sole source of transaction meaning.
+
 ---
 
 # 30. Threat model from historical crypto failures
@@ -2213,6 +2351,14 @@ It asks:
 | Flash-loan manipulation  | Partially            | Oracle delay, state-change limits, TWAP               | Bad protocol design                                                |
 | Malicious token behavior | Partially            | Token traits standard, protocol rejection             | Tokens lying about traits, supply-chain attacks on token contracts |
 | MEV extraction           | Partially            | Encrypted mempool, MEV disclosure                     | Ordering power, censorship, private orderflow abuse                |
+| Compiler soundness bug   | Partially            | Reference interpreter, bytecode verification, diff fuzzing | WASM-level reentrancy barrier failure, optimizer removing checks  |
+| Prover soundness bug     | Partially            | Independent provers, proof checking, version pinning  | False "Formally Verified" label on malicious contract             |
+| WASM sandbox escape      | Partially            | No JIT, interpreted fallback, multi-runtime verification | Zero-day in WASM engine allowing node memory access               |
+| DAG randomness grinding  | Partially            | VDF post-processing, multi-source entropy, min-seed-distance | Miner coalition biasing beacon via DAG structure manipulation      |
+| Supply chain compromise  | Partially            | Pinned deps, dependency auditing, reproducible builds | Backdoor in obscure Rust dependency                               |
+| Eclipse / network partition | Partially         | Diverse peers, partition detection, checkpoint cross-validation | Botnet isolating Aurora committee or miners                        |
+| Crypto implementation bug | Partially           | Multi-implementation verification, constant-time, formal verification of critical paths | Forged Aurora checkpoint via buggy signature aggregation           |
+| Hardware side-channel    | Partially            | Multi-vendor requirement, hardware revocation response, no single-TEE trust | Key extraction from secure element via power analysis              |
 
 ## 30.2 Design principle
 
@@ -2236,6 +2382,12 @@ The threat model is updated to include emerging attack surfaces:
 * **Formal-tool supply-chain risk**: Compromised verification tooling that produces false proofs. Mitigated by independent prover implementations and reproducible verification.
 * **Monitoring evasion**: Attackers who learn anomaly detection patterns and avoid triggering them. Mitigated by non-deterministic monitoring thresholds and independent monitoring nodes.
 * **Post-quantum migration apathy**: Users and protocols that delay migrating to quantum-safe cryptography. Mitigated by NRC-42 enforcement timelines and on-chain quantum readiness scores.
+* **Compiler optimizer removing safety checks**: Inspired by the Solidity Yul optimizer bugs. The Pulsar optimizer must never remove checked arithmetic, external-call barriers, or invariant checks. Differential testing catches regressions.
+* **Under-constrained formal model**: Inspired by Circom under-constrained circuits. The Pulsar-to-Lean4 translation may omit constraints, allowing false proofs. Mitigated by independent prover implementations and adversarial prover testing.
+* **Supply chain attacks on dependencies**: A backdoor in an obscure Rust crate used by `nova-types` or `nova-vm` could bypass all protocol-level security. Mitigated by pinned dependencies, auditing, and reproducible builds (section 7.1).
+* **WASM runtime zero-day**: A sandbox escape in the WASM interpreter could allow crafted contracts to access node memory. Mitigated by no-JIT policy, interpreted fallback, and continuous runtime fuzzing (section 10.2).
+* **Eclipse attacks on Aurora committee**: A botnet isolating committee members to feed them a distorted DAG view. Mitigated by diverse peer requirements and partition detection (section 8.4).
+* **Cryptographic implementation flaws**: A bug in signature aggregation math could allow forged checkpoints. Mitigated by multi-implementation verification and constant-time implementations (section 9.6).
 
 ---
 
@@ -2987,6 +3139,13 @@ Every executable proposal should publish a deterministic simulation. For proposa
 * permission changes
 * formal verification of invariant preservation (optional, mandatory for critical proposals)
 
+**Trojan proposal defense**: A sophisticated attacker may craft a governance proposal that passes formal verification but contains a subtle logical flaw. Defenses:
+
+* Formal verification of a proposal is necessary but not sufficient for approval.
+* All proposals undergo independent human review by at least two auditors who were not involved in writing the proposal.
+* The challenge period includes adversarial testing: security researchers are explicitly encouraged to attempt to break the proposal.
+* Proposals that modify consensus-critical code (Class D) require social consensus, not just governance vote, precisely because formal verification alone cannot be trusted to catch every flaw.
+
 * state diff if executed
 * asset movements
 * upgrade effects
@@ -3139,6 +3298,7 @@ NRC-41  On-Chain Anomaly Detection & Monitoring Hooks
 NRC-42  Post-Quantum Migration Standard
 NRC-43  Shielded Intent Privacy (Optional)
 NRC-44  AI-Assisted Verification Guidelines
+NRC-45  Compiler Soundness & Supply Chain Security
 ```
 
 Most important safety stack:
@@ -3161,6 +3321,7 @@ NRC-37  Governance proposal intent hash
 NRC-39  Pulsar formal specification language
 NRC-40  Pulsar Prover & high-assurance certification
 NRC-41  On-chain anomaly detection & monitoring hooks
+NRC-45  Compiler soundness & supply chain security
 ```
 
 ---
@@ -3268,6 +3429,12 @@ NOVA does not claim:
 * Humans cannot be socially engineered.
 * Tokens always behave as they declare.
 * MEV disappears.
+* Formal verification eliminates all bugs.
+* The compiler always preserves language guarantees at the WASM level.
+* The WASM runtime has no sandbox escape vulnerabilities.
+* Hardware signing devices have no side-channel vulnerabilities.
+* Dependencies have no supply-chain compromises.
+* Signature aggregation has no implementation bugs.
 
 Remaining risks:
 
@@ -3291,6 +3458,14 @@ Remaining risks:
 * Hardware supply-chain risk
 * Token contract supply-chain risk
 * MEV and censorship
+* Compiler soundness gaps (language guarantees not preserved at WASM level)
+* WASM runtime sandbox escapes
+* Prover soundness bugs (false "Formally Verified" labels)
+* Dependency supply-chain compromises
+* Cryptographic implementation errors
+* Network eclipse and partitioning attacks
+* Hardware side-channel and TEE vulnerabilities
+* Optimizer removing safety checks for performance
 
 The strongest honest claim:
 
